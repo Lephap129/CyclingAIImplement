@@ -1,7 +1,7 @@
 # Cycling AI implement
 Implement AI model to embedded computer
 # Guidance
-**Requiment**: Enviroment have python >=3.10.0 to run
+**Requiment**: Enviroment have `python>=3.10.0` to run
 
 First, clone our git to your workspace:
 ```shell
