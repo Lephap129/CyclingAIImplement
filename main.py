@@ -5,7 +5,7 @@ import pandas as pd
 from tkinter import Tk, Label, Entry, Button, Frame, PanedWindow, messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite
+from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite, ThreadManager, UARTClient
 import time
 
 class PredictionApp:
@@ -37,6 +37,16 @@ class PredictionApp:
         self.have_model = False
         self.cycling_model = CyclingAIModeltflite()
         self.load_data()
+        self.thread_manager = ThreadManager()
+        self.uart_client = UARTClient()
+        self.thread_manager.start_thread("Uart_Client",self.uart_thread,fps=30)
+        while not self.uart_client.isConnect:
+            continue
+        else:
+            print("Connected Done!")
+        
+    def uart_thread(self):
+        self.uart_client.start_client()
 
     def load_data(self):
         self.raw_data = pd.read_csv('Datatest/cyclingLabel.csv')
@@ -114,6 +124,13 @@ class PredictionApp:
         ax.grid(True)
         self.plot_canvas.draw()
 
-root = Tk()
-app = PredictionApp(root)
-root.mainloop()
+if __name__ == "__main__":
+    root = Tk()
+    app = PredictionApp(root)
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        root.destroy()
+
+    
+
