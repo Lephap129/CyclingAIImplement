@@ -5,8 +5,8 @@ import pandas as pd
 from tkinter import Tk, Label, Entry, Button, Frame, PanedWindow, messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite, ThreadManager, UARTClient
-import time
+from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite, ThreadManager, TCPConnection
+import time, logging
 
 class PredictionApp:
     def __init__(self, master):
@@ -20,16 +20,13 @@ class PredictionApp:
         self.interactive_frame = Frame(self.paned_window, padx=600)
         self.paned_window.add(self.interactive_frame, height=160)
         
-        Label(self.interactive_frame, text="From:").grid(row=1, column=0, padx=10, pady=5, sticky="E")
+        Label(self.interactive_frame, text="Level").grid(row=1, column=0, padx=10, pady=10, sticky="E")
         self.entry_a = Entry(self.interactive_frame)
         self.entry_a.grid(row=1, column=1, padx=10, pady=5)
         
-        Label(self.interactive_frame, text="To:").grid(row=2, column=0, padx=10, pady=5, sticky="E")
-        self.entry_b = Entry(self.interactive_frame)
-        self.entry_b.grid(row=2, column=1, padx=10, pady=5)
-        
-        Button(self.interactive_frame, text="Load Model", command=self.load_model).grid(row=3, column=0, columnspan=2, pady=10)
-        Button(self.interactive_frame, text="Predict Phase", command=self.predict_phase).grid(row=4, column=0, columnspan=2, pady=10)
+        Button(self.interactive_frame, text="  Load Model  ", command=self.load_model).grid(row=3, column=0, columnspan=2, pady=10)
+        Button(self.interactive_frame, text="Predict Phase ", command=self.start_predict_phase).grid(row=4, column=0, pady=10)
+        Button(self.interactive_frame, text=" Stop Predict ", command=self.stop_predict).grid(row=4, column=1, pady=10)
         
         self.plot_frame = Frame(self.paned_window, bg="white")
         self.paned_window.add(self.plot_frame, height=400)
@@ -38,18 +35,21 @@ class PredictionApp:
         self.cycling_model = CyclingAIModeltflite()
         self.load_data()
         self.thread_manager = ThreadManager()
-        self.uart_client = UARTClient()
-        self.thread_manager.start_thread("Uart_Client",self.uart_thread,fps=30)
-        while not self.uart_client.isConnect:
-            continue
-        else:
-            print("Connected Done!")
+        self.is_predicting = False
+        self.y_true = []
+        self.y_pred = []
+        client_host = "192.168.1.96"
+        client_port = 2000
+        server_host = "192.168.1.96"
+        server_port = 4000
+        self.uart_client = TCPConnection(client_host, client_port, server_host, server_port)
+        self.uart_client.connect_to_server()
+        time.sleep(1)
+        self.uart_client.start_server()
+        self.thread_manager.start_thread("Uart_Client",self.uart_client.server_handler,fps=30)
+        self.thread_manager.start_thread("Read_Data",self.uart_client.client_handler,fps=30)
         
-    def uart_thread(self):
-        self.uart_client.start_client()
-
     def load_data(self):
-        self.raw_data = pd.read_csv('Datatest/cyclingLabel.csv')
         min_max_df = pd.read_csv('min_max_values.csv')
         min_max_list = list(min_max_df.itertuples(index=False, name=None))
         self.cycling_model.set_min_max_list(min_max_list)
@@ -64,47 +64,80 @@ class PredictionApp:
         else:
             messagebox.showerror("Error", "Model file not found")
     
-    def predict_phase(self):
+    def start_predict_phase(self):
         if not self.have_model:
             messagebox.showerror("Error", "Model not loaded!")
             return
-        
         try:
-            a, b = int(self.entry_a.get()), int(self.entry_b.get())
+            a = int(self.entry_a.get())
         except ValueError:
-            messagebox.showerror("Error", "Enter valid numbers for From and To.")
+            messagebox.showerror("Error", "Enter valid numbers for level.")
             return
+        if self.uart_client.is_running:
+            # logging.info(f"Sending data: R{a},{b}")
+            self.uart_client.data_send = f"F{a}E"
+            time.sleep(0.1)
+            self.uart_client.data_send = f"RE"
+            self.is_predicting = True
+            # self.uart_client.send_data(self.uart_client.send_socket, self.uart_client.data_send)
+            self.thread_manager.start_thread("Predict_Phase", self.predict_phase, fps=100)
+    
+    def stop_predict(self):
+        logging.info("stop predict phase")
+        if self.uart_client.is_running:
+            # logging.info(f"Sending data: R{a},{b}")
+            self.uart_client.data_send = f"XE"
+            self.is_predicting = False
+            # self.uart_client.send_data(self.uart_client.send_socket, self.uart_client.data_send)
+            
+    def predict_phase(self):
+        start_time = time.time()
+        i = 1
+        input_data = None
+        while self.is_predicting:
+            if self.uart_client.data_recv is not None:
+                data = self.uart_client.data_recv
+                self.uart_client.data_recv = None
+                l_data = data.split(" ")
+
+                Tau_Motor = float(l_data[1])
+                Tau_1 = float(l_data[3])
+                Tau_2 = float(l_data[5])
+                vel = float(l_data[7])
+                phase = int(l_data[9])
+
+                if input_data is None:
+                    process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel = CyclingProcessingData(Tau_Motor, 'Tau_Motor'), CyclingProcessingData(Tau_1, 'Tau_1'), CyclingProcessingData(Tau_2, 'Tau_2'), CyclingProcessingData(vel, 'vel')
+                    input_data = np.array([[Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]] * 5)
+                else:
+                    process_Tau_Motor.update_data(Tau_Motor)
+                    process_Tau_1.update_data(Tau_1)
+                    process_Tau_2.update_data(Tau_2)
+                    process_vel.update_data(vel)
+            
+                    item = [Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]
+                    input_data = np.append(input_data[1:], [item], axis=0)
+                elapsed_time = time.time() - start_time
+                frequency = i / elapsed_time
+                if i >=100:
+                    i = 1
+                    start_time = time.time()
+                predict = self.cycling_model.predict_phase(input_data)
+                i += 1
+                self.y_true.append(phase)
+                self.y_pred.append(self.cycling_model.predict_phase(input_data))
+                print(f"Frequency = {frequency:.2f} Hz, True = {phase}, Predicted = {predict}")
+                # if len(self.y_true) > 500:
+                #     self.y_true = self.y_true[-500:]
+                #     self.y_pred = self.y_pred[-500:]
         
-        view_data = self.raw_data[(self.raw_data['period'] >= a) & (self.raw_data['period'] <= b)]
-        view_data = view_data.drop(columns=["date", "t", "encoder_count", "level", "period", "degree", "turn", "push_leg", "mode", "Tau_Motor_deriv", "Tau_1_deriv", "Tau_2_deriv", "vel_deriv"])
-        X, y = view_data.drop(columns=['phase']).values, view_data['phase'].values
-        
-        if len(X) < 5:
-            messagebox.showerror("Error", "Not enough data points for window size.")
-            return
-        
-        y_pred = []
-        for widget in self.plot_frame.winfo_children():
-            widget.destroy()
+        # for widget in self.plot_frame.winfo_children():
+        #     widget.destroy()
         fig, ax = self.create_plot()
         self.plot_canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
         self.plot_canvas.get_tk_widget().pack(fill="both", expand=True)
-        
-        process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel = [CyclingProcessingData(X[0][i], col) for i, col in enumerate(['Tau_Motor', 'Tau_1', 'Tau_2', 'vel'])]
-        input_data = np.array([[X[0][0], X[0][1], X[0][2], X[0][3], process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]] * 5)
-        start_time = time.time()
-        for i in range(len(X)):
-            for j, process in enumerate([process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel]):
-                process.update_data(X[i][j])
-            
-            item = [X[i][0], X[i][1], X[i][2], X[i][3], process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]
-            input_data = np.append(input_data[1:], [item], axis=0)
-            elapsed_time = time.time() - start_time
-            frequency = (i + 1) / elapsed_time
-            print(f"Loop {i + 1}: Frequency = {frequency:.2f} Hz")
-            y_pred.append(self.cycling_model.predict_phase(input_data))
-        self.update_plot(ax, y[:len(y_pred)], y_pred)
-        self.master.update_idletasks()
+        self.update_plot(ax, self.y_true, self.y_pred)
+        # self.master.update_idletasks()
             
     
     def create_plot(self):
@@ -127,9 +160,13 @@ class PredictionApp:
 if __name__ == "__main__":
     root = Tk()
     app = PredictionApp(root)
+    logging.basicConfig(level=logging.INFO)
     try:
         root.mainloop()
     except KeyboardInterrupt:
+        app.uart_client.data_send = "bye"
+        time.sleep(0.1)
+        app.thread_manager.stop_all()
         root.destroy()
 
     

@@ -164,40 +164,71 @@ class ThreadManager:
             stop_event.set()
         self.threads.clear()
         self.logger.info("All threads stopped.")
-        
-class UARTClient:
-    def __init__(self, server_host='127.0.0.1', recv_port=4000, send_port=2000):
+class TCPConnection:
+    def __init__(self, client_host, client_port, server_host, server_port):
+        self.client_host = client_host
+        self.client_port = client_port
         self.server_host = server_host
-        self.recv_port = recv_port
-        self.send_port = send_port
-        self.data_recv = None
+        self.server_port = server_port
+        self.client_socket = None
+        self.server_socket = None
+        self.client_conn = None
+        self.is_running = True
         self.data_send = None
-        self.isConnect = False
+        self.data_recv = None
+
+    def connect_to_server(self):
+        """ Connect to an external server """
+        self.client_socket = socket.socket()
+        try:
+            self.client_socket.connect((self.client_host, self.client_port))
+            print(f"Successfully connected to {self.client_host} on port {self.client_port}")
+        except Exception as e:
+            print(f"Connection failed: {e}")
+
+    def start_server(self):
+        """ Start server to listen for incoming connections """
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind((self.server_host, self.server_port))
+        self.server_socket.listen(1)  # Allow only 1 connection
+        print(f"Server listening on {self.server_host}:{self.server_port}")
+        
+        self.client_conn, addr = self.server_socket.accept()
+        print(f"Connected to {addr}")
+
+    def server_handler(self):
+        """ Server thread to send messages """
+        while self.is_running:
+            if self.data_send is not None:
+                message = self.data_send
+                self.data_send = None
+                if message.lower() == "bye":
+                    self.client_conn.sendall(message.encode())
+                    time.sleep(1)
+                    self.client_conn.close()
+                    self.is_running = False
+                    break
+                self.client_conn.sendall(message.encode())
+                time.sleep(0.05)
+
+    def client_handler(self):
+        """ Client thread to receive messages """
+        while self.is_running:
+            try:
+                msg = self.client_socket.recv(1024).decode()
+                if not msg:
+                    break
+                # logging.info(f"Received: {msg}")
+                self.data_recv = msg
+                if msg.lower() == "bye":
+                    self.client_socket.close()
+                    self.is_running = False
+                    break
+            except Exception as e:
+                print(f"Error receiving message: {e}")
+                break
     
-    def read_data(self, conn):
-        """Reads data from the server connection."""
-        return conn.recv(1024).decode('utf-8').strip()
-    
-    def send_data(self, conn, message):
-        """Sends data to the server connection."""
-        conn.sendall(message.encode('utf-8'))
-    
-    def start_client(self):
-        """Starts the client, connecting to the server on both send and receive ports."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as send_socket:
-            send_socket.connect((self.server_host, self.send_port))
-            print(f"Connected to server for sending data on {self.server_host}:{self.send_port}")
-            
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as recv_socket:
-                recv_socket.connect((self.server_host, self.recv_port))
-                print(f"Connected to server for receiving data on {self.server_host}:{self.recv_port}")
-                self.isConnect = True
-                while True:
-                    if self.data_send is not None:
-                        self.send_data(send_socket, self.data_send)
-                        self.data_send = None
-                    
-                    data = self.read_data(recv_socket)
-                    if data:
-                        self.data_recv = data
-                        print(f"Received: {data}")
+    def start_threads(self):
+        """ Start both server and client threads """
+        threading.Thread(target=self.server_handler, daemon=True).start()
+        threading.Thread(target=self.client_handler, daemon=True).start()
