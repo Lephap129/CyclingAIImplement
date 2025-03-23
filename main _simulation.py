@@ -5,7 +5,7 @@ import pandas as pd
 from tkinter import Tk, Label, Entry, Button, Frame, PanedWindow, messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite, ThreadManager, TCPConnection, UartClient
+from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite, ThreadManager, TCPConnection
 import time, logging
 
 class PredictionApp:
@@ -40,17 +40,16 @@ class PredictionApp:
         self.is_predicting = False
         self.y_true = []
         self.y_pred = []
-        server_host1 = "/dev/ttyACM0"
-        server_port1 = 9600
-        server_host2 = "/dev/ttyACM1"
-        server_port2 = 9600
-        self.uart_client1 = UartClient(server_host1, server_port1)
-        self.uart_client2 = UartClient(server_host2, server_port2)
-        self.thread_manager.start_thread("Uart_Client1",self.uart_client1.server_handler,fps=30)
-        self.thread_manager.start_thread("Read_Data1",self.uart_client1.client_handler,fps=30)
-        self.thread_manager.start_thread("Uart_Client2",self.uart_client2.server_handler,fps=30)
-        self.thread_manager.start_thread("Read_Data2",self.uart_client2.client_handler,fps=30)
-        time.sleep(2)
+        client_host = "192.168.2.118"
+        client_port = 2000
+        server_host = "192.168.2.118"
+        server_port = 4000
+        self.uart_client = TCPConnection(client_host, client_port, server_host, server_port)
+        self.uart_client.connect_to_server()
+        time.sleep(1)
+        self.uart_client.start_server()
+        self.thread_manager.start_thread("Uart_Client",self.uart_client.server_handler,fps=30)
+        self.thread_manager.start_thread("Read_Data",self.uart_client.client_handler,fps=30)
         
     def load_data(self):
         self.raw_data = pd.read_csv('Datatest/cyclingLabel.csv')
@@ -77,17 +76,20 @@ class PredictionApp:
         except ValueError:
             messagebox.showerror("Error", "Enter valid numbers for level.")
             return
-        if self.uart_client1.is_running and self.uart_client2.is_running:
+        if self.uart_client.is_running:
             # logging.info(f"Sending data: R{a},{b}")
-            self.uart_client1.data_send = f"m"
-            self.uart_client2.data_send = f"s"
+            self.uart_client.data_send = f"F{a}E"
+            time.sleep(0.5)
+            self.uart_client.data_send = f"RE"
             self.is_predicting = True
             # self.uart_client.send_data(self.uart_client.send_socket, self.uart_client.data_send)
             self.thread_manager.start_thread("Predict_Phase", self.predict_phase, fps=60)
     
     def stop_predict(self):
         logging.info("stop predict phase")
-        if self.uart_client1.is_running and self.uart_client2.is_running:
+        if self.uart_client.is_running:
+            # logging.info(f"Sending data: R{a},{b}")
+            self.uart_client.data_send = f"XE"
             self.is_predicting = False
             # self.uart_client.send_data(self.uart_client.send_socket, self.uart_client.data_send)
             for widget in self.plot_frame.winfo_children():
@@ -104,36 +106,22 @@ class PredictionApp:
         start_time = time.time()
         i = 1
         input_data = None
-        l_data_buffer1 = None
-        l_data_buffer2 = None
-        counter = 0
-        view_data = self.raw_data.drop(columns=["date", "t", "encoder_count", "period", "degree", "turn", "push_leg", "mode", "Tau_Motor_deriv", "Tau_1_deriv", "Tau_2_deriv", "vel_deriv"])
-        view_data_len = len(view_data)
+        # view_data = self.raw_data.drop(columns=["date", "t", "encoder_count", "period", "degree", "turn", "push_leg", "mode", "Tau_Motor_deriv", "Tau_1_deriv", "Tau_2_deriv", "vel_deriv"])
         while self.is_predicting:
-            if l_data_buffer1 is None or l_data_buffer2 is None:
-                if self.uart_client1.data_recv is not None:
-                    data = self.uart_client1.data_recv
-                    self.uart_client1.data_recv = None
-                    l_data_buffer1 = data.split(",")
-                if self.uart_client2.data_recv is not None:
-                    data = self.uart_client2.data_recv
-                    self.uart_client2.data_recv = None
-                    l_data_buffer2 = data.split(",")
-            
-            if l_data_buffer1 is not None and l_data_buffer2 is not None:
-                self.uart_client1.data_send = f"m"
-                self.uart_client2.data_send = f"s"
-                Tau_Motor = float(view_data['Tau_Motor'].values[counter])
-                vel = float(view_data['vel'].values[counter])
-                Tau_1 = float(view_data['Tau_1'].values[counter])
-                Tau_2 = float(view_data['Tau_2'].values[counter])
-                phase = int(view_data['phase'].values[counter])
-                counter = counter + 1 if counter < view_data_len-1 else 0
-                self.l_data_buffer1 = None
-                self.l_data_buffer2 = None
-                # phase = int(l_data[9])
-                # counter = int(l_data[13])
-                # print(f"counter {counter}")
+            if self.uart_client.data_recv is not None:
+                data = self.uart_client.data_recv
+                self.uart_client.data_recv = None
+                self.uart_client.data_send = f"Have received"
+                l_data = data.split(" ")
+
+                Tau_Motor = float(l_data[1])
+                Tau_1 = float(l_data[3])
+                Tau_2 = float(l_data[5])
+                vel = float(l_data[7])
+                phase = int(l_data[9])
+                counter = int(l_data[13])
+                print(f"counter {counter}")
+
                 if input_data is None:
                     process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel = CyclingProcessingData(Tau_Motor, 'Tau_Motor'), CyclingProcessingData(Tau_1, 'Tau_1'), CyclingProcessingData(Tau_2, 'Tau_2'), CyclingProcessingData(vel, 'vel')
                     input_data = np.array([[Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]] * 5)
@@ -172,9 +160,9 @@ class PredictionApp:
     def update_plot(self, ax, y_true, y_pred):
         diff = [y_true[i] - y_pred[i] for i in range(len(y_true))]
         ax.clear()
-        ax.plot(range(max(len(y_pred)-300,0),len(y_pred)), y_pred[max(len(y_pred)-300,0):len(y_pred)], label="Predicted", color='blue')
-        ax.plot(range(max(len(diff)-300,0),len(diff)), diff[max(len(diff)-300,0):len(diff)], label="Different", color='green')
-        ax.scatter(range(max(len(y_true)-300,0),len(y_true)), y_true[max(len(y_true)-300,0):len(y_true)], color='red', label='True', marker='o', s=20)
+        ax.plot(range(max(len(y_pred)-200,0),len(y_pred)), y_pred[max(len(y_pred)-200,0):len(y_pred)], label="Predicted", color='blue')
+        ax.plot(range(max(len(diff)-200,0),len(diff)), diff[max(len(diff)-200,0):len(diff)], label="Different", color='green')
+        ax.scatter(range(max(len(y_true)-200,0),len(y_true)), y_true[max(len(y_true)-200,0):len(y_true)], color='red', label='True', marker='o', s=20)
         ax.legend()
         ax.grid(True)
         self.plot_canvas.draw()

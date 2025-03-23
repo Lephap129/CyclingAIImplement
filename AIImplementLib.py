@@ -7,7 +7,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from scipy.signal import savgol_filter
-import socket
+import socket, serial
 
 class ImplementAIModel(ABC):
     @abstractmethod
@@ -230,5 +230,48 @@ class TCPConnection:
     
     def start_threads(self):
         """ Start both server and client threads """
+        threading.Thread(target=self.server_handler, daemon=True).start()
+        threading.Thread(target=self.client_handler, daemon=True).start()
+        
+class UartClient:
+    def __init__(self, sever_host="/dev/ttyUSB0", server_port=9600):
+        self.server_host = sever_host
+        self.server_port = server_port
+        self.serial_obj = serial.Serial(self.server_host, self.server_port, timeout=1)
+        self.data_send = None
+        self.data_recv = None
+        self.is_running = True
+        self.setTorque = 0
+        self.setSpd = 0
+        self.spd = 0
+        self.mode = "None"
+        self.RunStatus = 0
+        self.pulse = 0
+        self.P = 0
+        self.lastP = 0
+    
+    def server_handler(self):
+        data = None
+        while self.is_running:
+            if self.serial_obj.in_waiting > 0:
+                data = self.serial_obj.readline().decode("utf-8").strip()
+            if not data:
+                continue
+            else:
+                # logging.info(f"{self.server_host} received: {data}")
+                self.data_recv = data
+                data = None
+            # self.serial_obj.write(response.encode())
+        
+    def client_handler(self):
+        while self.is_running:
+            if self.data_send is not None:
+                data = self.data_send
+                self.data_send = None
+                # print(f"Sending: {data}")
+                self.serial_obj.write(data.encode())
+            time.sleep(0.05)
+    
+    def start_threads(self):
         threading.Thread(target=self.server_handler, daemon=True).start()
         threading.Thread(target=self.client_handler, daemon=True).start()

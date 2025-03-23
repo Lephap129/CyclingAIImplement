@@ -13,15 +13,20 @@ class UartSimulation:
         self.P = 0
         self.lastP = 0
     def process_uart_command(self, data):
+        response = ""
         if not data:
-            return "Invalid command"
-        
+            response = "Invalid command"
+            return response
+        if data == "Have received":
+            response = "Sending more data"
+            return response
         command = data[0]
         content = data[1:].split('E')[0]  # Extract data before 'E'
         
         if command == 'F':  # Force mode
             self.setTorque = int(content)
             self.mode = "Force"
+            response = "Setting force mode"
         
         elif command == 'S':  # Speed mode
             self.spd = int(content)
@@ -31,21 +36,24 @@ class UartSimulation:
             elif self.setSpd < 0:
                 self.setSpd -= 30
             self.mode = "Speed"
+            response = "Setting speed mode"
         
         elif command == 'X':  # Stop command
             self.RunStatus = 0
             self.setSpd = 0
             self.spd = 0
             self.setTorque = 0
+            response = "Stopping"
         
         elif command == 'R':  # Run command
             self.RunStatus = 1
             self.pulse = 0
             self.P = 0
             self.lastP = 0
+            response = "Sending more data"
         
-        response = f"Command: {command}, Mode: {self.mode}, Speed: {self.setSpd}, Torque: {self.setTorque}, RunStatus: {self.RunStatus}"
-        print(response)
+        confirm = f"Command: {command}, Mode: {self.mode}, Speed: {self.setSpd}, Torque: {self.setTorque}, RunStatus: {self.RunStatus}"
+        print(confirm)
         return response
 
 class TCPConnection:
@@ -118,9 +126,9 @@ class TCPConnection:
         threading.Thread(target=self.client_handler, daemon=True).start()
 
 if __name__ == "__main__":
-    client_host = "192.168.1.96"
+    client_host = "192.168.2.118"
     client_port = 4000
-    server_host = "192.168.1.96"
+    server_host = "192.168.2.118"
     server_port = 2000
     
     tcp_connection = TCPConnection(client_host, client_port, server_host, server_port)
@@ -133,6 +141,8 @@ if __name__ == "__main__":
     tcp_connection.start_threads()
     counter = 0
     frequency = 0
+    response = ""
+    run_data = None
     try:
         while tcp_connection.is_running:
             if tcp_connection.data_recv is not None:
@@ -140,20 +150,31 @@ if __name__ == "__main__":
                 data = tcp_connection.data_recv
                 response = uart_data.process_uart_command(data)
                 tcp_connection.data_recv = None
-                if uart_data.setTorque > 0:
-                    run_data = view_data
+                if response == "Setting force mode":
+                    if uart_data.setTorque > 0:
+                        run_data = view_data.groupby('level').get_group(uart_data.setTorque)
+                    else:
+                        run_data = view_data
                     run_length = len(run_data)
-            if uart_data.RunStatus == 1 and uart_data.setTorque > 0:
-                logging.info("Running")
-                if counter == 0:
-                    start_time = time.time()
-                elif counter == run_length - 1:
-                    end_time = time.time()
-                    frequency = run_length / (end_time - start_time)
-                    print(f"Frequency: {frequency} Hz")
-                tcp_connection.data_send = f"M {run_data['Tau_Motor'].values[counter]} V {run_data['vel'].values[counter]} TA {run_data['Tau_1'].values[counter]} TB {run_data['Tau_2'].values[counter]} P {run_data['phase'].values[counter]} f {frequency} E"
-                counter = counter + 1 if counter < run_length-1 else 0
-                time.sleep(0.04)
+                
+                if uart_data.RunStatus == 0 and response == "Stopping":
+                    logging.info("Stopped")
+                    run_data = None
+                    counter = 0
+                    frequency = 0
+            
+                if uart_data.RunStatus == 1 and response == "Sending more data":
+                    logging.info("Running")
+                    if counter == 0:
+                        start_time = time.time()
+                    elif counter == run_length - 1:
+                        end_time = time.time()
+                        frequency = run_length / (end_time - start_time)
+                        print(f"Frequency: {frequency} Hz")
+                    tcp_connection.data_send = f"M {run_data['Tau_Motor'].values[counter]} TA {run_data['Tau_1'].values[counter]} TB {run_data['Tau_2'].values[counter]} V {run_data['vel'].values[counter]} P {run_data['phase'].values[counter]} f {frequency} C {counter} E"
+                    counter = counter + 1 if counter < run_length-1 else 0
+                    # time.sleep(0.01)
+                    # import pdb; pdb.set_trace()
     except KeyboardInterrupt:
         tcp_connection.data_send = "bye"
         time.sleep(1)
