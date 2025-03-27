@@ -22,7 +22,12 @@ git add .
 git commit -m "<your commend commit>"
 git push origin firmware_<workbranch name>
 ```
-Then, let's go to github and make pull request to firmware branch.
+Then, let's go to github and make pull request to firmware branch:
 
-
+![Select pull request](imgs/Pull_request%20(6).png)
+![Choose create pull request](imgs/Pull_request%20(5).png)
+![Ensure select pull request](imgs/Pull_request%20(4).png)
+![Confirm pull request](imgs/Pull_request%20(3).png)
+![Confirm merge pull request](imgs/Pull_request%20(2).png)
+![Result pull request](imgs/Pull_request%20(1).png)
 
