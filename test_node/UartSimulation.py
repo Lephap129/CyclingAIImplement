@@ -126,9 +126,9 @@ class TCPConnection:
         threading.Thread(target=self.client_handler, daemon=True).start()
 
 if __name__ == "__main__":
-    client_host = "192.168.2.118"
+    client_host = "172.19.200.151"
     client_port = 4000
-    server_host = "192.168.2.118"
+    server_host = "172.19.200.151"
     server_port = 2000
     
     tcp_connection = TCPConnection(client_host, client_port, server_host, server_port)

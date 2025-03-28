@@ -6,7 +6,8 @@ from tkinter import Tk, Label, Entry, Button, Frame, PanedWindow, messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite, ThreadManager, TCPConnection
-import time, logging
+import time, logging, csv, pytz
+from datetime import datetime
 
 class PredictionApp:
     def __init__(self, master):
@@ -40,9 +41,21 @@ class PredictionApp:
         self.is_predicting = False
         self.y_true = []
         self.y_pred = []
-        client_host = "192.168.2.118"
+        
+        # Specify the timezone for Ho Chi Minh City
+        tz = pytz.timezone('Asia/Ho_Chi_Minh')
+        # Get the current time in Ho Chi Minh City
+        now = datetime.now(tz)
+        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S") 
+        self.fields = ['t','Tau_Motor','Tau_1','Tau_2','vel']
+        self.filename = f"Cycling_log_{timestamp}.csv"
+        with open(self.filename, 'w') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=self.fields)
+            writer.writeheader()
+        
+        client_host = "172.19.200.151"
         client_port = 2000
-        server_host = "192.168.2.118"
+        server_host = "172.19.200.151"
         server_port = 4000
         self.uart_client = TCPConnection(client_host, client_port, server_host, server_port)
         self.uart_client.connect_to_server()
@@ -50,7 +63,15 @@ class PredictionApp:
         self.uart_client.start_server()
         self.thread_manager.start_thread("Uart_Client",self.uart_client.server_handler,fps=30)
         self.thread_manager.start_thread("Read_Data",self.uart_client.client_handler,fps=30)
-        
+    
+    
+    def updateLog(self, time, Tau_Motor, Tau_1, Tau_2, vel):
+        list_append = [{'t': time, 'Tau_Motor': Tau_Motor, 'Tau_1': Tau_1, 'Tau_2': Tau_2, 'vel': vel}]
+        with open(self.filename, 'a') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=self.fields)
+            writer.writerows(list_append)
+            csvfile.close()
+    
     def load_data(self):
         self.raw_data = pd.read_csv('Datatest/cyclingLabel.csv')
         min_max_df = pd.read_csv('min_max_values.csv')
@@ -120,6 +141,7 @@ class PredictionApp:
                 vel = float(l_data[7])
                 phase = int(l_data[9])
                 counter = int(l_data[13])
+                self.updateLog(l_data[0], Tau_Motor, Tau_1, Tau_2, vel)
                 print(f"counter {counter}")
 
                 if input_data is None:
