@@ -52,16 +52,19 @@ if __name__ == "__main__":
     server_host2 = "/dev/ttyACM1"
     server_port2 = 9600
     
+    uart_client1 = UartClient(server_host1, server_port1)
     uart_client1.start_threads()
     uart_client2 = UartClient(server_host2, server_port2)
     uart_client2.start_threads()
-    time.sleep(2)
+    time.sleep(4)
     logging.basicConfig(level=logging.INFO)
-    data = input("Enter data to send: ")
-    uart_client1.data_send = data
-    uart_client2.data_send = data
+    # data = input("Enter data to send: ")
+    # uart_client1.data_send = data
+    # uart_client2.data_send = data
     l_data1 = []
     l_data2 = []
+    count = 0
+    start_time = time.time()
     while True:
         if uart_client1.data_recv is not None:
             data1 = uart_client1.data_recv.split(",")
@@ -78,7 +81,18 @@ if __name__ == "__main__":
             print(l_data1)
             print("Data 2 received:")
             print(l_data2)
+            l_data1 = []
+            l_data2 = []
             break
+        
+        frequency = 1/(time.time() - start_time)
+        if count >= frequency/2:
+            count = 0
+            start_time = time.time()
+            data = "ms"
+            uart_client1.data_send = data
+            uart_client2.data_send = data
+        count += 1
         
         
     

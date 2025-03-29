@@ -48,15 +48,15 @@ class PredictionApp:
         now = datetime.now(tz)
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S") 
         self.fields = ['t','Tau_Motor','Tau_1','Tau_2','vel']
-        self.filename = f"Cycling_log_{timestamp}.csv"
+        self.filename = f"Cycling_log_.csv"
         with open(self.filename, 'w') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=self.fields)
             writer.writeheader()
             
         server_host1 = "/dev/ttyACM0"
-        server_port1 = 9600
+        server_port1 = 115200
         server_host2 = "/dev/ttyACM1"
-        server_port2 = 9600
+        server_port2 = 115200
         self.uart_client1 = UartClient(server_host1, server_port1)
         self.uart_client2 = UartClient(server_host2, server_port2)
         self.thread_manager.start_thread("Uart_Client1",self.uart_client1.server_handler,fps=30)
@@ -123,38 +123,57 @@ class PredictionApp:
     def predict_phase(self):
         start_time = time.time()
         i = 1
+        i1 = 1
+        i2 = 1
         input_data = None
         l_data_buffer1 = None
         l_data_buffer2 = None
         counter = 0
+        pretime = time.time()
+        pretime1 = time.time()
+        pretime2 = time.time()
+        frequency = 0
+        frequency1 =0
+        frequency2 = 0
         view_data = self.raw_data.drop(columns=["date", "t", "encoder_count", "period", "degree", "turn", "push_leg", "mode", "Tau_Motor_deriv", "Tau_1_deriv", "Tau_2_deriv", "vel_deriv"])
         view_data_len = len(view_data)
         while self.is_predicting:
-            if l_data_buffer1 is None or l_data_buffer2 is None:
-                if self.uart_client1.data_recv is not None:
-                    data = self.uart_client1.data_recv
-                    self.uart_client1.data_recv = None
-                    l_data_buffer1 = data.split(",")
-                if self.uart_client2.data_recv is not None:
-                    data = self.uart_client2.data_recv
-                    self.uart_client2.data_recv = None
-                    l_data_buffer2 = data.split(",")
+
+            if self.uart_client1.data_recv is not None:
+                elapsed_time = time.time() - pretime1
+                pretime1 = time.time()
+                frequency1 = 0.1 / elapsed_time + 0.9 * frequency1
+                data = self.uart_client1.data_recv
+                self.uart_client1.data_recv = None
+                l_data_buffer1 = data.split(",")
+            if self.uart_client2.data_recv is not None:
+                elapsed_time = time.time() - pretime2
+                pretime2 = time.time()
+                frequency2 = 0.1 / elapsed_time + 0.9 * frequency2
+                data = self.uart_client2.data_recv
+                self.uart_client2.data_recv = None
+                l_data_buffer2 = data.split(",")
             
             if l_data_buffer1 is not None and l_data_buffer2 is not None:
                 self.uart_client1.data_send = f"m"
                 self.uart_client2.data_send = f"s"
+                # Tau_Motor = float(l_data_buffer1[1])
+                # vel = float(l_data_buffer1[0])
+                # Tau_1 = float(l_data_buffer2[0])
+                # Tau_2 = float(l_data_buffer2[1])
                 Tau_Motor = float(view_data['Tau_Motor'].values[counter])
-                vel = float(view_data['vel'].values[counter])
                 Tau_1 = float(view_data['Tau_1'].values[counter])
                 Tau_2 = float(view_data['Tau_2'].values[counter])
+                vel = float(view_data['vel'].values[counter])
                 phase = int(view_data['phase'].values[counter])
                 counter = counter + 1 if counter < view_data_len-1 else 0
-                # self.updateLog(l_data_buffer1[0], Tau_Motor, Tau_1, Tau_2, vel)
-                self.l_data_buffer1 = None
-                self.l_data_buffer2 = None
+                self.updateLog(0, Tau_Motor, Tau_1, Tau_2, vel)
+                l_data_buffer1 = None
+                l_data_buffer2 = None
                 # phase = int(l_data[9])
                 # counter = int(l_data[13])
                 # print(f"counter {counter}")
+                
                 if input_data is None:
                     process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel = CyclingProcessingData(Tau_Motor, 'Tau_Motor'), CyclingProcessingData(Tau_1, 'Tau_1'), CyclingProcessingData(Tau_2, 'Tau_2'), CyclingProcessingData(vel, 'vel')
                     input_data = np.array([[Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]] * 5)
@@ -166,16 +185,14 @@ class PredictionApp:
             
                     item = [Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]
                     input_data = np.append(input_data[1:], [item], axis=0)
-                elapsed_time = time.time() - start_time
-                frequency = i / elapsed_time
-                if i >=100:
-                    i = 1
-                    start_time = time.time()
+                elapsed_time = time.time() - pretime
+                pretime = time.time()
+                frequency = 0.1 / elapsed_time + 0.9 * frequency
                 predict = self.cycling_model.predict_phase(input_data)
                 i += 1
                 self.y_true.append(phase)
                 self.y_pred.append(self.cycling_model.predict_phase(input_data))
-                print(f"Frequency = {frequency:.2f} Hz, True = {phase}, Predicted = {predict}")
+                print(f"Frequency = {frequency:.2f} Hz; Frequency1 = {frequency1:.2f} Hz; Frequency2 = {frequency2:.2f} Hz")
                 if len(self.y_true) > 500:
                     self.y_true = self.y_true[-500:]
                     self.y_pred = self.y_pred[-500:]
@@ -207,10 +224,10 @@ if __name__ == "__main__":
     try:
         root.mainloop()
     except KeyboardInterrupt:
-        app.uart_client.data_send = "bye"
+        # app.uart_client.data_send = "bye"
         time.sleep(1)
-        app.uart_client.server_socket.close()
-        app.uart_client.client_socket.close()
+        # app.uart_client.server_socket.close()
+        # app.uart_client.client_socket.close()
         app.thread_manager.stop_all()
         root.destroy()
 
