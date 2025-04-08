@@ -26,29 +26,30 @@ double sum1 = 0, sum2 = 0, avg1 = 0, avg2 = 0;
 
 HX711 scale1, scale2;
 
-void serialEvent() {
-  if (Serial.read() == 's') {
-
-    // Send data from UART0
-    Serial.print(avg1, 2);
-    Serial.print(",");
-    Serial.println(avg2, 2);
-  }
-}
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
 
   scale1.begin(LOADCELL_DOUT_PIN1, LOADCELL_SCK_PIN1);
   scale2.begin(LOADCELL_DOUT_PIN2, LOADCELL_SCK_PIN2);
 }
 
 void loop() {
+  // Serial.print(avg1, 2);
+  // Serial.print(",");
+  // Serial.println(avg2, 2);
+  String data = Serial.readStringUntil('\n');
+  if (data == "s")
+  {
+    // Send data from UART0
+    Serial.print(avg1, 2);
+    Serial.print(",");
+    Serial.println(avg2, 2);
+  }
+  
   if ((scale1.is_ready() && scale2.is_ready())) {
     reading1 = scale1.read();
     reading2 = scale2.read();
-
-
 
     if ((reading1 != 0 && reading2 != 0)) {
       // M1 = ((reading1 - Zero_Momen1) * 20) / 9260000;
@@ -62,8 +63,6 @@ void loop() {
       different2 = Zero_Force2 - M2;
       M2 = different2 / ratio2 * 10;  // gia tri thuc luc cang chan 2 (N)
     }
-
-
 
     /* Loc trung binh 10 gia tri de tranh so nhay qua nhanh */
     sum1 = 0;
@@ -86,4 +85,5 @@ void loop() {
     // Serial.print("M2: ");
     // Serial.println(avg2);
   }
+
 }
