@@ -8,6 +8,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from AIImplementLib import CyclingAIModelH5, CyclingProcessingData, CyclingAIModeltflite, ThreadManager, TCPConnection
 import time, logging, csv, pytz
 from datetime import datetime
+from multiprocessing import Queue
 
 class PredictionApp:
     def __init__(self, master):
@@ -48,21 +49,22 @@ class PredictionApp:
         now = datetime.now(tz)
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S") 
         self.fields = ['t','Tau_Motor','Tau_1','Tau_2','vel']
-        self.filename = f"Cycling_log_{timestamp}.csv"
+        self.filename = f"Cycling_log_.csv"
         with open(self.filename, 'w') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=self.fields)
             writer.writeheader()
         
-        client_host = "172.19.200.151"
+        client_host = "10.70.132.123"
         client_port = 2000
-        server_host = "172.19.200.151"
+        server_host = "10.70.132.123"
         server_port = 4000
-        self.uart_client = TCPConnection(client_host, client_port, server_host, server_port)
+        self.uart_client = TCPConnection(client_host, client_port, server_host, server_port,max_queue=100)
         self.uart_client.connect_to_server()
         time.sleep(1)
         self.uart_client.start_server()
-        self.thread_manager.start_thread("Uart_Client",self.uart_client.server_handler,fps=30)
-        self.thread_manager.start_thread("Read_Data",self.uart_client.client_handler,fps=30)
+        self.thread_manager.start_thread("Uart_Client",self.uart_client.server_handler,fps=20)
+        self.thread_manager.start_thread("Read_Data",self.uart_client.client_handler,fps=20)
+        self.data_queue = Queue(maxsize=20)
     
     
     def updateLog(self, time, Tau_Motor, Tau_1, Tau_2, vel):
@@ -104,7 +106,7 @@ class PredictionApp:
             self.uart_client.data_send = f"RE"
             self.is_predicting = True
             # self.uart_client.send_data(self.uart_client.send_socket, self.uart_client.data_send)
-            self.thread_manager.start_thread("Predict_Phase", self.predict_phase, fps=60)
+            self.thread_manager.start_thread("Predict_Phase", self.predict_phase, fps=100)
     
     def stop_predict(self):
         logging.info("stop predict phase")
@@ -124,25 +126,42 @@ class PredictionApp:
         # self.master.update_idletasks()
             
     def predict_phase(self):
-        start_time = time.time()
-        i = 1
         input_data = None
-        # view_data = self.raw_data.drop(columns=["date", "t", "encoder_count", "period", "degree", "turn", "push_leg", "mode", "Tau_Motor_deriv", "Tau_1_deriv", "Tau_2_deriv", "vel_deriv"])
+        pretime = time.time()
+        frequency = 0
+        pretime1 = time.time()
+        frequency1 = 0
+        counter = 0
+        print_count = 0
+        view_data = self.raw_data.drop(columns=["date", "t", "encoder_count", "period", "degree", "turn", "push_leg", "mode", "Tau_Motor_deriv", "Tau_1_deriv", "Tau_2_deriv", "vel_deriv"])
+        view_data_len = len(view_data)
+        data_buffer = None
         while self.is_predicting:
-            if self.uart_client.data_recv is not None:
-                data = self.uart_client.data_recv
-                self.uart_client.data_recv = None
-                self.uart_client.data_send = f"Have received"
-                l_data = data.split(" ")
-
-                Tau_Motor = float(l_data[1])
-                Tau_1 = float(l_data[3])
-                Tau_2 = float(l_data[5])
-                vel = float(l_data[7])
-                phase = int(l_data[9])
-                counter = int(l_data[13])
-                self.updateLog(l_data[0], Tau_Motor, Tau_1, Tau_2, vel)
-                print(f"counter {counter}")
+            # if not self.uart_client.data_recv.empty:
+            data_buffer = self.uart_client.data_recv.get()
+            elapsed_time = time.time() - pretime1
+            pretime1 = time.time()
+            frequency1 = 0.1 / elapsed_time + 0.9 * frequency1
+            
+            self.uart_client.data_send = f"Have received"
+            # l_data = data.split(" ")
+            
+            if data_buffer is not None:
+                # Tau_Motor = float(l_data[1])
+                # Tau_1 = float(l_data[3])
+                # Tau_2 = float(l_data[5])
+                # vel = float(l_data[7])
+                # phase = int(l_data[9])
+                # counter = int(l_data[13])
+                data_buffer = None
+                Tau_Motor = float(view_data['Tau_Motor'].values[counter])
+                Tau_1 = float(view_data['Tau_1'].values[counter])
+                Tau_2 = float(view_data['Tau_2'].values[counter])
+                vel = float(view_data['vel'].values[counter])
+                phase = int(view_data['phase'].values[counter])
+                counter = counter + 1 if counter < view_data_len-1 else 0
+                self.updateLog(0, Tau_Motor, Tau_1, Tau_2, vel)
+                
 
                 if input_data is None:
                     process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel = CyclingProcessingData(Tau_Motor, 'Tau_Motor'), CyclingProcessingData(Tau_1, 'Tau_1'), CyclingProcessingData(Tau_2, 'Tau_2'), CyclingProcessingData(vel, 'vel')
@@ -155,16 +174,17 @@ class PredictionApp:
             
                     item = [Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]
                     input_data = np.append(input_data[1:], [item], axis=0)
-                elapsed_time = time.time() - start_time
-                frequency = i / elapsed_time
-                if i >=100:
-                    i = 1
-                    start_time = time.time()
+                elapsed_time = time.time() - pretime
+                pretime = time.time()
+                frequency = 0.1 / elapsed_time + 0.9 * frequency
                 predict = self.cycling_model.predict_phase(input_data)
-                i += 1
                 self.y_true.append(phase)
                 self.y_pred.append(self.cycling_model.predict_phase(input_data))
-                print(f"Frequency = {frequency:.2f} Hz, True = {phase}, Predicted = {predict}")
+                if print_count > frequency/2:
+                    print(f"counter {counter}")
+                    print(f"Frequency = {frequency:.2f} Hz, recieve speed = {self.uart_client.client_speed:.2f} Hz, true phase = {phase}, predict phase = {predict}, queue size = {self.uart_client.data_recv.qsize()}")
+                    print_count = 0
+                print_count+=1
                 if len(self.y_true) > 500:
                     self.y_true = self.y_true[-500:]
                     self.y_pred = self.y_pred[-500:]

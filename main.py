@@ -54,9 +54,9 @@ class PredictionApp:
             writer.writeheader()
             
         server_host1 = "/dev/ttyACM0"
-        server_port1 = 115200
+        server_port1 = 9600
         server_host2 = "/dev/ttyACM1"
-        server_port2 = 115200
+        server_port2 = 9600
         self.uart_client1 = UartClient(server_host1, server_port1)
         self.uart_client2 = UartClient(server_host2, server_port2)
         self.thread_manager.start_thread("Uart_Client1",self.uart_client1.server_handler,fps=30)
@@ -98,18 +98,20 @@ class PredictionApp:
             messagebox.showerror("Error", "Enter valid numbers for level.")
             return
         if self.uart_client1.is_running and self.uart_client2.is_running:
-            # logging.info(f"Sending data: R{a},{b}")
+            logging.info(f"Sending data")
+            self.uart_client1.data_send = f"r"
+            time.sleep(1)
             self.uart_client1.data_send = f"m"
             self.uart_client2.data_send = f"s"
             self.is_predicting = True
-            # self.uart_client.send_data(self.uart_client.send_socket, self.uart_client.data_send)
             self.thread_manager.start_thread("Predict_Phase", self.predict_phase, fps=60)
     
     def stop_predict(self):
         logging.info("stop predict phase")
         if self.uart_client1.is_running and self.uart_client2.is_running:
+            self.uart_client1.data_send = f"x"
             self.is_predicting = False
-            # self.uart_client.send_data(self.uart_client.send_socket, self.uart_client.data_send)
+            self.thread_manager.stop_thread("Predict_Phase")
             for widget in self.plot_frame.winfo_children():
                 widget.destroy()
             # self.fig, self.ax = self.create_plot()
@@ -139,33 +141,43 @@ class PredictionApp:
         view_data_len = len(view_data)
         while self.is_predicting:
 
-            if self.uart_client1.data_recv is not None:
+            # if self.uart_client1.data_recv is not None:
+            if self.uart_client1.data_recv.qsize() > 0:
+                logging.debug(f"Data from UART1: {self.uart_client1.data_recv}")
                 elapsed_time = time.time() - pretime1
                 pretime1 = time.time()
                 frequency1 = 0.1 / elapsed_time + 0.9 * frequency1
-                data = self.uart_client1.data_recv
-                self.uart_client1.data_recv = None
+                data = self.uart_client1.data_recv.get()
                 l_data_buffer1 = data.split(",")
-            if self.uart_client2.data_recv is not None:
+            
+            # if self.uart_client2.data_recv is not None:
+            if self.uart_client2.data_recv.qsize() > 0:
+                logging.debug(f"Data from UART2: {self.uart_client2.data_recv}")
                 elapsed_time = time.time() - pretime2
                 pretime2 = time.time()
                 frequency2 = 0.1 / elapsed_time + 0.9 * frequency2
-                data = self.uart_client2.data_recv
-                self.uart_client2.data_recv = None
+                data = self.uart_client2.data_recv.get()
                 l_data_buffer2 = data.split(",")
             
+            # if l_data_buffer1 is None and l_data_buffer2 is not None:
+            #     logging.debug(f"Resend from UART1")
+            #     self.uart_client1.data_send = f"m"
+            # elif l_data_buffer1 is not None and l_data_buffer2 is None:
+            #     logging.debug(f"Resend from UART2")
+            #     self.uart_client2.data_send = f"s"
             if l_data_buffer1 is not None and l_data_buffer2 is not None:
+                logging.debug(f"Taken data: {l_data_buffer1} {l_data_buffer2}")
                 self.uart_client1.data_send = f"m"
                 self.uart_client2.data_send = f"s"
-                # Tau_Motor = float(l_data_buffer1[1])
-                # vel = float(l_data_buffer1[0])
-                # Tau_1 = float(l_data_buffer2[0])
-                # Tau_2 = float(l_data_buffer2[1])
-                Tau_Motor = float(view_data['Tau_Motor'].values[counter])
-                Tau_1 = float(view_data['Tau_1'].values[counter])
-                Tau_2 = float(view_data['Tau_2'].values[counter])
-                vel = float(view_data['vel'].values[counter])
-                phase = int(view_data['phase'].values[counter])
+                Tau_Motor = float(l_data_buffer1[1])
+                vel = float(l_data_buffer1[0])
+                Tau_1 = float(l_data_buffer2[0])
+                Tau_2 = float(l_data_buffer2[1])
+                # Tau_Motor = float(view_data['Tau_Motor'].values[counter])
+                # Tau_1 = float(view_data['Tau_1'].values[counter])
+                # Tau_2 = float(view_data['Tau_2'].values[counter])
+                # vel = float(view_data['vel'].values[counter])
+                # phase = int(view_data['phase'].values[counter])
                 counter = counter + 1 if counter < view_data_len-1 else 0
                 self.updateLog(0, Tau_Motor, Tau_1, Tau_2, vel)
                 l_data_buffer1 = None
@@ -174,28 +186,29 @@ class PredictionApp:
                 # counter = int(l_data[13])
                 # print(f"counter {counter}")
                 
-                if input_data is None:
-                    process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel = CyclingProcessingData(Tau_Motor, 'Tau_Motor'), CyclingProcessingData(Tau_1, 'Tau_1'), CyclingProcessingData(Tau_2, 'Tau_2'), CyclingProcessingData(vel, 'vel')
-                    input_data = np.array([[Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]] * 5)
-                else:
-                    process_Tau_Motor.update_data(Tau_Motor)
-                    process_Tau_1.update_data(Tau_1)
-                    process_Tau_2.update_data(Tau_2)
-                    process_vel.update_data(vel)
+                # if input_data is None:
+                #     process_Tau_Motor, process_Tau_1, process_Tau_2, process_vel = CyclingProcessingData(Tau_Motor, 'Tau_Motor'), CyclingProcessingData(Tau_1, 'Tau_1'), CyclingProcessingData(Tau_2, 'Tau_2'), CyclingProcessingData(vel, 'vel')
+                #     input_data = np.array([[Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]] * 5)
+                # else:
+                #     process_Tau_Motor.update_data(Tau_Motor)
+                #     process_Tau_1.update_data(Tau_1)
+                #     process_Tau_2.update_data(Tau_2)
+                #     process_vel.update_data(vel)
             
-                    item = [Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]
-                    input_data = np.append(input_data[1:], [item], axis=0)
+                #     item = [Tau_Motor, Tau_1, Tau_2, vel, process_Tau_Motor.derivative_data(), process_Tau_1.derivative_data(), process_Tau_2.derivative_data(), process_vel.derivative_data()]
+                #     input_data = np.append(input_data[1:], [item], axis=0)
                 elapsed_time = time.time() - pretime
                 pretime = time.time()
                 frequency = 0.1 / elapsed_time + 0.9 * frequency
-                predict = self.cycling_model.predict_phase(input_data)
-                i += 1
-                self.y_true.append(phase)
-                self.y_pred.append(self.cycling_model.predict_phase(input_data))
+                # predict = self.cycling_model.predict_phase(input_data)
+                # i += 1
+                # self.y_true.append(phase)
+                # self.y_pred.append(self.cycling_model.predict_phase(input_data))
                 print(f"Frequency = {frequency:.2f} Hz; Frequency1 = {frequency1:.2f} Hz; Frequency2 = {frequency2:.2f} Hz")
-                if len(self.y_true) > 500:
-                    self.y_true = self.y_true[-500:]
-                    self.y_pred = self.y_pred[-500:]
+                print(f"Queue1 size: {self.uart_client1.data_recv.qsize()}, Queue2 size: {self.uart_client2.data_recv.qsize()}")
+                # if len(self.y_true) > 500:
+                #     self.y_true = self.y_true[-500:]
+                #     self.y_pred = self.y_pred[-500:]
             
     
     def create_plot(self):
