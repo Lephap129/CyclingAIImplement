@@ -47,16 +47,16 @@ class PredictionApp:
         tz = pytz.timezone('Asia/Ho_Chi_Minh')
         # Get the current time in Ho Chi Minh City
         now = datetime.now(tz)
-        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S") 
+        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
         self.fields = ['t','Tau_Motor','Tau_1','Tau_2','vel']
         self.filename = f"Cycling_log_.csv"
         with open(self.filename, 'w') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=self.fields)
             writer.writeheader()
         
-        client_host = "10.70.132.123"
+        client_host = "192.168.1.214"
         client_port = 2000
-        server_host = "10.70.132.123"
+        server_host = "192.168.1.214"
         server_port = 4000
         self.uart_client = TCPConnection(client_host, client_port, server_host, server_port,max_queue=100)
         self.uart_client.connect_to_server()
@@ -65,7 +65,6 @@ class PredictionApp:
         self.thread_manager.start_thread("Uart_Client",self.uart_client.server_handler,fps=20)
         self.thread_manager.start_thread("Read_Data",self.uart_client.client_handler,fps=20)
         self.data_queue = Queue(maxsize=20)
-    
     
     def updateLog(self, time, Tau_Motor, Tau_1, Tau_2, vel):
         list_append = [{'t': time, 'Tau_Motor': Tau_Motor, 'Tau_1': Tau_1, 'Tau_2': Tau_2, 'vel': vel}]
